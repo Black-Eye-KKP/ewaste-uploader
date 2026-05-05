@@ -1,0 +1,159 @@
+{
+  "name": "EVS E-Waste Metal Analyser",
+  "nodes": [
+
+    {
+      "id": "node-webhook",
+      "name": "Webhook — Receive Image",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [200, 300],
+      "webhookId": "ewaste",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ewaste",
+        "responseMode": "lastNode",
+        "options": {
+          "binaryData": true
+        }
+      }
+    },
+
+    {
+      "id": "node-read-binary",
+      "name": "Read Binary File",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [420, 300],
+      "parameters": {
+        "operation": "binaryToBinary",
+        "binaryPropertyName": "image"
+      }
+    },
+
+    {
+      "id": "node-grok-agent",
+      "name": "AI Agent — Grok Vision",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.6,
+      "position": [640, 300],
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are an expert in electronic waste (e-waste) material analysis.\n\nAnalyse the uploaded e-waste image and return ONLY valid JSON (no markdown, no backticks) with this exact structure:\n{\n  \"image_name\": \"{{ $('Webhook — Receive Image').item.json.body.original_name }}\",\n  \"metals_detected\": [\n    { \"name\": \"Copper\", \"symbol\": \"Cu\", \"recoverable\": true, \"estimated_weight_g\": 45, \"percentage\": 18 }\n  ],\n  \"total_recoverable_percentage\": 72,\n  \"negative_impacts\": [\n    \"Toxic fumes during smelting\",\n    \"Acid leaching contaminates groundwater\"\n  ],\n  \"summary\": \"Brief 2-sentence summary of the device and its composition.\"\n}",
+        "options": {}
+      }
+    },
+
+    {
+      "id": "node-parse-json",
+      "name": "Parse AI Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 300],
+      "parameters": {
+        "jsCode": "const raw = $input.item.json.output || $input.item.json.text || '';\nlet analysis;\ntry {\n  // Strip accidental markdown fences\n  const cleaned = raw.replace(/```json|```/g, '').trim();\n  analysis = JSON.parse(cleaned);\n} catch(e) {\n  analysis = { error: 'Parse failed', raw };\n}\nreturn [{ json: { analysis, original_name: $('Webhook — Receive Image').item.json.body.original_name } }];"
+      }
+    },
+
+    {
+      "id": "node-market-data",
+      "name": "Get Metal Market Data (Python Flask)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1080, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:5000/metal-prices",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "metals",
+              "value": "={{ JSON.stringify($json.analysis.metals_detected.map(m => m.name)) }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+
+    {
+      "id": "node-build-html",
+      "name": "Build Report HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1300, 300],
+      "parameters": {
+        "jsCode": "const analysis   = $('Parse AI Response').item.json.analysis;\nconst imgName    = $('Parse AI Response').item.json.original_name || 'image';\nconst marketData = $input.item.json;  // from Flask /metal-prices\n\n// Build metals rows\nconst metalsRows = (analysis.metals_detected || []).map(m => `\n  <tr>\n    <td>${m.name} (${m.symbol})</td>\n    <td>${m.recoverable ? '<span class=\"badge green\">Yes</span>' : '<span class=\"badge red\">No</span>'}</td>\n    <td>${m.estimated_weight_g ?? '—'} g</td>\n    <td>${m.percentage ?? '—'}%</td>\n  </tr>`).join('');\n\n// Build impacts list\nconst impacts = (analysis.negative_impacts || []).map(i => `<li>${i}</li>`).join('');\n\n// Build chart data arrays\nconst metals     = (analysis.metals_detected || []).map(m => m.name);\nconst pcts       = (analysis.metals_detected || []).map(m => m.percentage || 0);\nconst weights    = (analysis.metals_detected || []).map(m => m.estimated_weight_g || 0);\n\n// Market price data from Flask (expected: { prices: { Metal: [{date,price},...] } })\nconst pricesRaw  = (marketData && marketData.prices) ? marketData.prices : {};\n\nconst html = `<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\" />\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n<title>E-Waste Report — ${imgName}</title>\n<script src=\"https://cdn.plot.ly/plotly-2.30.0.min.js\"><\\/script>\n<style>\n  :root {\n    --bg: #0f1117; --card: #1a1d2e; --border: #2a2d3e;\n    --accent: #6c63ff; --green: #66bb6a; --red: #ef5350;\n    --text: #e0e0e0; --muted: #8b8fa8;\n  }\n  * { box-sizing: border-box; margin: 0; padding: 0; }\n  body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); padding: 32px; }\n  h1 { font-size: 26px; margin-bottom: 6px; }\n  .subtitle { color: var(--muted); font-size: 14px; margin-bottom: 28px; }\n  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 24px; }\n  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; }\n  .card h2 { font-size: 15px; color: var(--accent); margin-bottom: 14px; text-transform: uppercase; letter-spacing: .5px; }\n  .img-wrap { text-align: center; }\n  .img-wrap img { max-width: 100%; border-radius: 8px; max-height: 320px; object-fit: contain; }\n  .img-name { margin-top: 10px; font-size: 13px; color: var(--muted); }\n  table { width: 100%; border-collapse: collapse; font-size: 13px; }\n  th { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); color: var(--muted); font-weight: 600; }\n  td { padding: 8px 10px; border-bottom: 1px solid #1e2035; }\n  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; }\n  .badge.green { background: #1b3a2e; color: var(--green); }\n  .badge.red   { background: #3a1e1e; color: var(--red);   }\n  .stat-box { display: flex; align-items: center; gap: 12px; padding: 14px; background: #12141f; border-radius: 8px; margin-bottom: 10px; }\n  .stat-num { font-size: 28px; font-weight: 700; color: var(--accent); }\n  .stat-label { font-size: 12px; color: var(--muted); margin-top: 2px; }\n  ul.impacts { list-style: none; }\n  ul.impacts li { padding: 7px 0; border-bottom: 1px solid #1e2035; font-size: 13px; }\n  ul.impacts li::before { content: '⚠ '; color: #ffb74d; }\n  .summary-box { font-size: 14px; line-height: 1.7; color: #c0c3d8; }\n  #chart-market, #chart-pie, #chart-bar { width: 100%; height: 380px; }\n  .full { grid-column: 1 / -1; }\n  .date-picker { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }\n  .date-picker label { font-size: 12px; color: var(--muted); }\n  .date-picker input { background: #12141f; border: 1px solid var(--border); color: var(--text); padding: 5px 10px; border-radius: 6px; font-size: 12px; }\n  .date-picker button { background: var(--accent); border: none; color: #fff; padding: 5px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; }\n<\\/style>\n</head>\n<body>\n\n<h1>&#9851; E-Waste Analysis Report</h1>\n<div class=\"subtitle\">Generated: ${new Date().toLocaleString()}</div>\n\n<div class=\"grid\">\n\n  <!-- Image -->\n  <div class=\"card img-wrap\">\n    <h2>Input Image</h2>\n    <img src=\"data:image/png;base64,PLACEHOLDER_BASE64\" alt=\"${imgName}\" />\n    <div class=\"img-name\">${imgName}</div>\n  </div>\n\n  <!-- Summary -->\n  <div class=\"card\">\n    <h2>Summary</h2>\n    <div class=\"summary-box\">${analysis.summary || 'No summary available.'}</div>\n    <br/>\n    <div class=\"stat-box\">\n      <div class=\"stat-num\">${analysis.total_recoverable_percentage ?? 0}%</div>\n      <div><div style=\"font-size:14px\">Total Recoverable Material</div><div class=\"stat-label\">by weight estimation</div></div>\n    </div>\n  </div>\n\n  <!-- Metals Table -->\n  <div class=\"card\">\n    <h2>Metals Detected</h2>\n    <table>\n      <thead><tr><th>Metal</th><th>Recoverable</th><th>Est. Weight</th><th>% Share</th></tr></thead>\n      <tbody>${metalsRows}</tbody>\n    </table>\n  </div>\n\n  <!-- Negative Impacts -->\n  <div class=\"card\">\n    <h2>Environmental / Health Impacts</h2>\n    <ul class=\"impacts\">${impacts}</ul>\n  </div>\n\n  <!-- Pie Chart -->\n  <div class=\"card\">\n    <h2>Material Composition (%)</h2>\n    <div id=\"chart-pie\"></div>\n  </div>\n\n  <!-- Bar Chart -->\n  <div class=\"card\">\n    <h2>Estimated Weight by Metal (g)</h2>\n    <div id=\"chart-bar\"></div>\n  </div>\n\n  <!-- Market Price Chart (full width) -->\n  <div class=\"card full\">\n    <h2>Metal Market Prices — Last 12 Months (USD/kg)</h2>\n    <div class=\"date-picker\">\n      <label>From: <input type=\"date\" id=\"date-from\" /></label>\n      <label>To: <input type=\"date\" id=\"date-to\" /></label>\n      <button onclick=\"filterChart()\">Apply</button>\n      <button onclick=\"resetChart()\">Reset</button>\n    </div>\n    <div id=\"chart-market\"></div>\n  </div>\n\n</div>\n\n<script>\n/* ── Static charts ─────────────────────────────────────────────────────── */\nconst metals  = ${JSON.stringify(metals)};\nconst pcts    = ${JSON.stringify(pcts)};\nconst weights = ${JSON.stringify(weights)};\n\nconst COLORS = ['#6c63ff','#4facfe','#66bb6a','#ffb74d','#ef5350','#ab47bc','#26c6da','#ff7043'];\n\nPlotly.newPlot('chart-pie', [{\n  type:'pie', labels:metals, values:pcts,\n  marker:{ colors:COLORS },\n  textinfo:'label+percent',\n  hole: 0.4,\n  textfont:{ color:'#e0e0e0' }\n}], {\n  paper_bgcolor:'transparent', plot_bgcolor:'transparent',\n  font:{ color:'#e0e0e0' }, margin:{ t:10,b:10,l:10,r:10 },\n  showlegend: false\n}, { responsive:true, displayModeBar:false });\n\nPlotly.newPlot('chart-bar', [{\n  type:'bar', x:metals, y:weights,\n  marker:{ color:COLORS }, text:weights.map(w=>w+'g'), textposition:'outside'\n}], {\n  paper_bgcolor:'transparent', plot_bgcolor:'#12141f',\n  font:{ color:'#e0e0e0' }, margin:{ t:10,b:40,l:40,r:10 },\n  xaxis:{ gridcolor:'#2a2d3e' }, yaxis:{ gridcolor:'#2a2d3e', title:'grams' }\n}, { responsive:true, displayModeBar:false });\n\n/* ── Market chart with zoom + date filter ─────────────────────────────── */\nconst pricesRaw = ${JSON.stringify(pricesRaw)};\nlet allTraces = [];\nlet minDate = '', maxDate = '';\n\nObject.entries(pricesRaw).forEach(([metal, pts], idx) => {\n  if (!Array.isArray(pts)) return;\n  const dates  = pts.map(p => p.date);\n  const prices = pts.map(p => p.price);\n  if (!minDate || dates[0] < minDate) minDate = dates[0];\n  if (!maxDate || dates[dates.length-1] > maxDate) maxDate = dates[dates.length-1];\n  allTraces.push({\n    type:'scatter', mode:'lines', name:metal,\n    x:dates, y:prices, line:{ color:COLORS[idx % COLORS.length], width:2 }\n  });\n});\n\nconst marketLayout = {\n  paper_bgcolor:'transparent', plot_bgcolor:'#12141f',\n  font:{ color:'#e0e0e0' }, margin:{ t:10,b:40,l:60,r:10 },\n  xaxis:{ gridcolor:'#2a2d3e', rangeslider:{} },\n  yaxis:{ gridcolor:'#2a2d3e', title:'USD / kg' },\n  legend:{ bgcolor:'#1a1d2e', bordercolor:'#2a2d3e', borderwidth:1 },\n  hovermode:'x unified'\n};\n\nPlotly.newPlot('chart-market', allTraces, marketLayout, { responsive:true });\n\nif (minDate) document.getElementById('date-from').value = minDate;\nif (maxDate) document.getElementById('date-to').value   = maxDate;\n\nfunction filterChart() {\n  const from = document.getElementById('date-from').value;\n  const to   = document.getElementById('date-to').value;\n  Plotly.relayout('chart-market', { 'xaxis.range': [from, to] });\n}\nfunction resetChart() {\n  Plotly.relayout('chart-market', { 'xaxis.autorange': true });\n}\n<\\/script>\n</body>\n</html>`;\n\nreturn [{ json: { html, image_name: imgName } }];"
+      }
+    },
+
+    {
+      "id": "node-send-to-flask",
+      "name": "POST Report to Flask (save to D:\\EVS\\EVs\\Reports)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1520, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:5000/save-report",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "html",        "value": "={{ $json.html }}" },
+            { "name": "image_name",  "value": "={{ $json.image_name }}" }
+          ]
+        },
+        "options": {}
+      }
+    },
+
+    {
+      "id": "node-respond",
+      "name": "Respond with HTML",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1740, 300],
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $('Build Report HTML').item.json.html }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              { "name": "Content-Type", "value": "text/html; charset=utf-8" }
+            ]
+          }
+        }
+      }
+    }
+
+  ],
+
+  "connections": {
+    "Webhook — Receive Image": {
+      "main": [[{ "node": "Read Binary File", "type": "main", "index": 0 }]]
+    },
+    "Read Binary File": {
+      "main": [[{ "node": "AI Agent — Grok Vision", "type": "main", "index": 0 }]]
+    },
+    "AI Agent — Grok Vision": {
+      "main": [[{ "node": "Parse AI Response", "type": "main", "index": 0 }]]
+    },
+    "Parse AI Response": {
+      "main": [[{ "node": "Get Metal Market Data (Python Flask)", "type": "main", "index": 0 }]]
+    },
+    "Get Metal Market Data (Python Flask)": {
+      "main": [[{ "node": "Build Report HTML", "type": "main", "index": 0 }]]
+    },
+    "Build Report HTML": {
+      "main": [[{ "node": "POST Report to Flask (save to D:\\EVS\\EVs\\Reports)", "type": "main", "index": 0 }]]
+    },
+    "POST Report to Flask (save to D:\\EVS\\EVs\\Reports)": {
+      "main": [[{ "node": "Respond with HTML", "type": "main", "index": 0 }]]
+    }
+  },
+
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
