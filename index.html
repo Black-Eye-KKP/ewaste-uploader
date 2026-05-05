@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>E-Waste Image Uploader</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #0f1117;
+      color: #e0e0e0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .container {
+      background: #1a1d2e;
+      border: 1px solid #2a2d3e;
+      border-radius: 16px;
+      padding: 40px;
+      width: 100%;
+      max-width: 680px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    }
+    .logo { display: flex; align-items: center; gap: 12px; margin-bottom: 28px; }
+    .logo svg { width: 36px; height: 36px; }
+    h1 { font-size: 22px; font-weight: 700; color: #ffffff; }
+    p.subtitle { color: #8b8fa8; font-size: 13px; margin-top: 4px; }
+    .drop-zone {
+      border: 2px dashed #3a3d55;
+      border-radius: 12px;
+      padding: 48px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      background: #12141f;
+      position: relative;
+    }
+    .drop-zone:hover, .drop-zone.dragover { border-color: #6c63ff; background: #16182a; }
+    .drop-zone input[type="file"] {
+      position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+    }
+    .drop-icon { font-size: 48px; margin-bottom: 12px; }
+    .drop-zone h2 { font-size: 16px; color: #c0c3d8; margin-bottom: 6px; }
+    .drop-zone p { font-size: 12px; color: #585b72; }
+    .badge {
+      display: inline-block;
+      background: #1e2035; border: 1px solid #2e3150;
+      border-radius: 6px; padding: 3px 10px;
+      font-size: 11px; color: #7b82a8; margin-top: 10px;
+    }
+    #preview-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+      gap: 12px; margin-top: 20px;
+    }
+    .preview-card {
+      background: #12141f; border: 1px solid #2a2d3e;
+      border-radius: 10px; overflow: hidden; position: relative;
+    }
+    .preview-card img { width: 100%; height: 100px; object-fit: cover; display: block; }
+    .preview-card .file-name {
+      padding: 6px 8px; font-size: 10px; color: #7b82a8;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .remove-btn {
+      position: absolute; top: 4px; right: 4px;
+      background: rgba(0,0,0,0.7); border: none; color: #ff6b6b;
+      border-radius: 50%; width: 22px; height: 22px;
+      font-size: 14px; cursor: pointer; line-height: 22px; text-align: center;
+    }
+    .status-tag {
+      position: absolute; bottom: 28px; left: 4px;
+      font-size: 9px; padding: 2px 6px; border-radius: 4px; font-weight: 600;
+    }
+    .status-tag.pending  { background: #2a2d3e; color: #8b8fa8; }
+    .status-tag.sending  { background: #1e3a5f; color: #4fc3f7; }
+    .status-tag.done     { background: #1b3a2e; color: #66bb6a; }
+    .status-tag.error    { background: #3a1e1e; color: #ef5350; }
+    .error-msg {
+      background: #2c1515; border: 1px solid #5c2626; color: #ff8a80;
+      padding: 10px 14px; border-radius: 8px; font-size: 13px;
+      margin-top: 16px; display: none;
+    }
+    #file-count { font-size: 13px; color: #585b72; margin-top: 12px; }
+    .config-row { display: flex; gap: 12px; margin-top: 20px; }
+    .config-row label { font-size: 12px; color: #7b82a8; display: block; margin-bottom: 4px; }
+    .config-row input {
+      background: #12141f; border: 1px solid #2a2d3e;
+      border-radius: 8px; padding: 8px 12px;
+      color: #e0e0e0; font-size: 13px; width: 100%;
+    }
+    .config-row input:focus { outline: none; border-color: #6c63ff; }
+    .send-btn {
+      width: 100%; margin-top: 24px; padding: 14px;
+      background: linear-gradient(135deg, #6c63ff, #4facfe);
+      border: none; border-radius: 10px; color: #fff;
+      font-size: 15px; font-weight: 600; cursor: pointer;
+      transition: opacity 0.2s; letter-spacing: 0.3px;
+    }
+    .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .send-btn:hover:not(:disabled) { opacity: 0.9; }
+    .progress-bar-wrap {
+      background: #12141f; border-radius: 6px; height: 8px;
+      margin-top: 16px; overflow: hidden; display: none;
+    }
+    .progress-bar {
+      height: 100%; width: 0%;
+      background: linear-gradient(90deg, #6c63ff, #4facfe);
+      transition: width 0.4s ease; border-radius: 6px;
+    }
+    #log-box {
+      background: #0d0f1a; border: 1px solid #1e2035;
+      border-radius: 8px; padding: 12px 14px;
+      font-family: monospace; font-size: 12px; color: #7b82a8;
+      max-height: 160px; overflow-y: auto;
+      margin-top: 16px; display: none;
+    }
+    #log-box p { margin-bottom: 4px; line-height: 1.5; }
+    #log-box .ok   { color: #66bb6a; }
+    #log-box .info { color: #4fc3f7; }
+    #log-box .err  { color: #ef5350; }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <div class="logo">
+    <svg viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="36" height="36" rx="8" fill="#6c63ff22"/>
+      <path d="M18 8L28 13V23L18 28L8 23V13L18 8Z" stroke="#6c63ff" stroke-width="2" fill="none"/>
+      <circle cx="18" cy="18" r="4" fill="#6c63ff"/>
+    </svg>
+    <div>
+      <h1>E-Waste Analyser</h1>
+      <p class="subtitle">Upload e-waste images — sent to n8n one by one with delay</p>
+    </div>
+  </div>
+
+  <div class="config-row">
+    <div style="flex:2">
+      <label>Flask Server URL</label>
+      <input id="flask-url" type="url" value="http://localhost:5000/upload" />
+    </div>
+    <div style="flex:1">
+      <label>Delay between files (seconds)</label>
+      <input id="delay-sec" type="number" value="40" min="5" max="300" />
+    </div>
+  </div>
+
+  <div class="drop-zone" id="drop-zone" style="margin-top:20px">
+    <input type="file" id="file-input" multiple
+      accept="image/jpeg,image/png,image/webp,image/gif,image/bmp" />
+    <div class="drop-icon">🗂️</div>
+    <h2>Drop images here or click to browse</h2>
+    <p>Only real image files are accepted (magic-byte verified)</p>
+    <div class="badge">JPG &nbsp;·&nbsp; PNG &nbsp;·&nbsp; WEBP &nbsp;·&nbsp; GIF &nbsp;·&nbsp; BMP</div>
+  </div>
+
+  <div class="error-msg" id="error-msg"></div>
+  <div id="file-count"></div>
+  <div id="preview-grid"></div>
+
+  <button class="send-btn" id="send-btn" disabled>🚀 Send to n8n Workflow</button>
+
+  <div class="progress-bar-wrap" id="progress-wrap">
+    <div class="progress-bar" id="progress-bar"></div>
+  </div>
+
+  <div id="log-box"></div>
+</div>
+
+<script>
+  /* ── Security: MIME whitelist + magic-byte verification ────────────────────── */
+  const ALLOWED_MIME = new Set([
+    'image/jpeg','image/png','image/webp','image/gif','image/bmp'
+  ]);
+  const MAGIC_SIGS = [
+    { mime:'image/jpeg', offset:0, bytes:[0xFF,0xD8,0xFF] },
+    { mime:'image/png',  offset:0, bytes:[0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A] },
+    { mime:'image/gif',  offset:0, bytes:[0x47,0x49,0x46,0x38] },
+    { mime:'image/bmp',  offset:0, bytes:[0x42,0x4D] },
+    { mime:'image/webp', offset:8, bytes:[0x57,0x45,0x42,0x50] },
+  ];
+  const MAX_MB = 20;
+
+  function checkMagic(file) {
+    return new Promise(resolve => {
+      const r = new FileReader();
+      r.onload = e => {
+        const buf = new Uint8Array(e.target.result);
+        for (const sig of MAGIC_SIGS) {
+          const slice = buf.slice(sig.offset, sig.offset + sig.bytes.length);
+          if (sig.bytes.every((b,i) => slice[i] === b)) { resolve(true); return; }
+        }
+        resolve(false);
+      };
+      r.readAsArrayBuffer(file.slice(0, 16));
+    });
+  }
+
+  async function validateAll(fileList) {
+    const good = [], bad = [];
+    for (const f of fileList) {
+      if (f.size > MAX_MB * 1024 * 1024)
+        { bad.push(`"${f.name}" exceeds ${MAX_MB} MB`); continue; }
+      if (!ALLOWED_MIME.has(f.type))
+        { bad.push(`"${f.name}" — disallowed type (${f.type||'unknown'})`); continue; }
+      const ok = await checkMagic(f);
+      if (!ok)
+        { bad.push(`"${f.name}" — failed magic-byte check (disguised file?)`); continue; }
+      good.push(f);
+    }
+    return { good, bad };
+  }
+
+  /* ── State ──────────────────────────────────────────────────────────────────── */
+  let validFiles = [];
+
+  function showError(msg) {
+    const el = document.getElementById('error-msg');
+    el.textContent = msg; el.style.display = msg ? 'block' : 'none';
+  }
+
+  function renderPreviews() {
+    const grid = document.getElementById('preview-grid');
+    grid.innerHTML = '';
+    validFiles.forEach((f, i) => {
+      const url = URL.createObjectURL(f);
+      const card = document.createElement('div');
+      card.className = 'preview-card'; card.id = `card-${i}`;
+      card.innerHTML = `
+        <img src="${url}" alt="${f.name}" />
+        <button class="remove-btn" onclick="removeFile(${i})">&#x2715;</button>
+        <span class="status-tag pending" id="tag-${i}">pending</span>
+        <div class="file-name">${f.name}</div>`;
+      grid.appendChild(card);
+    });
+    const cnt = document.getElementById('file-count');
+    cnt.textContent = validFiles.length ? `${validFiles.length} file(s) queued` : '';
+    document.getElementById('send-btn').disabled = validFiles.length === 0;
+  }
+
+  window.removeFile = i => { validFiles.splice(i, 1); renderPreviews(); };
+
+  async function handleFiles(fileList) {
+    showError('');
+    const { good, bad } = await validateAll(Array.from(fileList));
+    if (bad.length) showError('Skipped: ' + bad.join('  |  '));
+    const existing = new Set(validFiles.map(f => f.name + f.size));
+    good.forEach(f => { if (!existing.has(f.name + f.size)) validFiles.push(f); });
+    renderPreviews();
+  }
+
+  /* ── Drag / file input ──────────────────────────────────────────────────────── */
+  const dz = document.getElementById('drop-zone');
+  dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
+  dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
+  dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('dragover'); handleFiles(e.dataTransfer.files); });
+  document.getElementById('file-input').addEventListener('change', e => handleFiles(e.target.files));
+
+  /* ── Logging ────────────────────────────────────────────────────────────────── */
+  function log(msg, cls='info') {
+    const box = document.getElementById('log-box');
+    box.style.display = 'block';
+    const p = document.createElement('p');
+    p.className = cls;
+    p.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    box.appendChild(p); box.scrollTop = box.scrollHeight;
+  }
+
+  function setTag(i, label, cls) {
+    const t = document.getElementById(`tag-${i}`);
+    if (t) { t.textContent = label; t.className = `status-tag ${cls}`; }
+  }
+
+  /* ── Send loop ──────────────────────────────────────────────────────────────── */
+  document.getElementById('send-btn').addEventListener('click', async () => {
+    if (!validFiles.length) return;
+    const url   = document.getElementById('flask-url').value.trim();
+    const delay = parseInt(document.getElementById('delay-sec').value) * 1000;
+    const btn   = document.getElementById('send-btn');
+    const pWrap = document.getElementById('progress-wrap');
+    const pBar  = document.getElementById('progress-bar');
+
+    btn.disabled = true;
+    pWrap.style.display = 'block';
+    log(`Starting — ${validFiles.length} file(s), ${delay/1000}s gap between each`);
+
+    for (let i = 0; i < validFiles.length; i++) {
+      const f = validFiles[i];
+      setTag(i, 'sending…', 'sending');
+      log(`Sending [${i+1}/${validFiles.length}] ${f.name}`);
+
+      const fd = new FormData();
+      fd.append('image', f, f.name);
+
+      try {
+        const res = await fetch(url, { method:'POST', body:fd });
+        if (!res.ok) throw new Error(`HTTP ${res.status} — ${await res.text()}`);
+        setTag(i, '✓ done', 'done');
+        log(`Accepted: ${f.name}`, 'ok');
+      } catch (err) {
+        setTag(i, '✗ error', 'error');
+        log(`Failed: ${f.name} — ${err.message}`, 'err');
+      }
+
+      pBar.style.width = `${((i+1)/validFiles.length)*100}%`;
+
+      if (i < validFiles.length - 1) {
+        log(`Waiting ${delay/1000}s before next file…`);
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+
+    log('All files processed.', 'ok');
+    btn.disabled = false;
+  });
+</script>
+</body>
+</html>
